@@ -1,0 +1,159 @@
+from gpiozero import DigitalInputDevice, Servo
+import cv2
+import pytesseract
+import pandas as pd
+from openpyxl import load_workbook
+from ultralytics import YOLO  # YOLOv8 object detection library
+import time
+from datetime import datetime  # For current timestamp
+
+# File path for the Excel file
+excel_file = "/home/PiCrew/PI/Documents/license_data.xlsx"
+sheet_name = "Sheet1"  # Update if your sheet has a different name
+
+# Servo motor setup for gate control
+servo = Servo(17, min_pulse_width=0.5 / 1000, max_pulse_width=2.5 / 1000)  # GPIO pin 17
+
+# IR sensor setup (GPIO pins for 4 slots)
+ir_sensors = {
+    "Slot 1": DigitalInputDevice(23),
+    "Slot 2": DigitalInputDevice(24),
+    "Slot 3": DigitalInputDevice(25),
+    "Slot 4": DigitalInputDevice(26),
+}
+
+# Function to check parking slot status
+def check_parking_slots():
+    availability = {}
+    for slot, sensor in ir_sensors.items():
+        availability[slot] = "Vacant" if sensor.value == 1 else "Occupied"
+    return availability
+
+# Function to display parking slot availability
+def display_parking_status():
+    availability = check_parking_slots()
+    print("Parking Slot Status:")
+    for slot, status in availability.items():
+        print(f"{slot}: {status}")
+    return availability
+
+# Gate control function
+def control_gate(action):
+    if action == "open":
+        print("Gate is opening (180°)...")
+        servo.value = 1.0  # Open gate
+        time.sleep(10)  # Wait for 10 seconds
+        print("Gate is closing (0°)...")
+        servo.value = -1.0  # Close gate
+    else:
+        print("Invalid gate action.")
+
+# Load Excel data
+def load_license_data():
+    try:
+        df = pd.read_excel(excel_file, sheet_name=sheet_name)
+        if "LicensePlate" not in df.columns:
+            raise ValueError("Excel sheet must contain a 'LicensePlate' column")
+        return df
+    except FileNotFoundError:
+        print("Excel file not found. Make sure the file exists.")
+        raise
+    except Exception as e:
+        print(f"Error loading Excel file: {e}")
+        raise
+
+# Check license plate status
+def check_license_plate_status(license_plate, df):
+    license_plate = license_plate.strip().upper()
+    authorized = license_plate in df["LicensePlate"].str.upper().values
+    return "Authorized" if authorized else "Unauthorized"
+
+# Update Excel with license plate, status, and current time
+def update_excel(license_plate, status):
+    workbook = load_workbook(excel_file)
+    sheet = workbook[sheet_name]
+    next_row = sheet.max_row + 1
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # Get the current time
+    
+    # Update Excel with license plate, status, and time
+    sheet.cell(row=next_row, column=1).value = license_plate
+    sheet.cell(row=next_row, column=2).value = status
+    sheet.cell(row=next_row, column=3).value = current_time  # Store the current time
+    workbook.save(excel_file)
+    print(f"Updated Excel with {license_plate} - {status} - {current_time}")
+
+# Process license plate
+def process_license_plate(license_plate):
+    df = load_license_data()
+    status = check_license_plate_status(license_plate, df)
+    update_excel(license_plate, status)
+    return status
+
+# Detect license plate using YOLO
+def detect_license_plate():
+    cap = cv2.VideoCapture(0)  # Initialize webcam
+    model = YOLO('/home/PiCrew/Desktop/SAKSHI/train7/weights/best.pt')  # Load YOLO model
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to capture frame. Exiting...")
+                break
+
+            # Display parking status
+            display_parking_status()
+
+            # Use YOLO to detect license plates
+            results = model(frame)
+            for result in results[0].boxes.data:
+                x1, y1, x2, y2 = map(int, result[:4])
+
+                # Draw rectangle around detected license plate
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                # Crop license plate region
+                roi = frame[y1:y2, x1:x2]
+                gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+                # OCR to extract license plate text
+                text = pytesseract.image_to_string(gray_roi)
+                cleaned_text = ''.join([c for c in text if c.isalnum()]).upper()
+
+                if cleaned_text:
+                    print(f"Detected License Plate: {cleaned_text}")
+
+                    # Process license plate
+                    status = process_license_plate(cleaned_text)
+
+                    # Open gate if authorized
+                    if status == "Authorized":
+                        control_gate("open")
+
+                    # Display status on frame
+                    cv2.putText(
+                        frame,
+                        f"{cleaned_text} - {status}",
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (0, 255, 0) if status == "Authorized" else (0, 0, 255),
+                        2,
+                        cv2.LINE_AA
+                    )
+
+            # Show webcam feed
+            cv2.imshow("License Plate Detection", frame)
+
+            # Exit on 'q' key
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+
+    finally:
+        cap.release()
+        cv2.destroyAllWindows()
+
+# Main function
+if __name__ == "__main__":
+    print("Starting system...")
+    detect_license_plate()
