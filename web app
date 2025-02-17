@@ -1,0 +1,151 @@
+from flask import Flask, render_template_string, request, redirect, url_for
+import pandas as pd
+import os
+
+app = Flask(__name__)
+
+# File path for the Excel file
+FILE_PATH = '/home/PiCrew/PI/Documents/license_data.xlsx'
+
+# Load the data from the Excel file
+def read_excel_data(file_path):
+    try:
+        # Check if the file exists before attempting to read
+        if os.path.exists(file_path):
+            df = pd.read_excel(file_path)  # Read the Excel file into a DataFrame
+            return df.iloc[:, :3]  # Select only the first two columns
+        else:
+            return pd.DataFrame(columns=["License Plate"])  # Return an empty DataFrame
+    except Exception as e:
+        print(f"Error reading Excel file: {e}")
+        return None
+
+# Save license plate data to the Excel file
+def save_to_excel(file_path, license_plate):
+    try:
+        # Check if the file exists
+        if os.path.exists(file_path):
+            df = pd.read_excel(file_path)
+        else:
+            df = pd.DataFrame(columns=["License Plate"])  # Create a new DataFrame if file doesn't exist
+
+        # Append the new license plate data
+        new_row = pd.DataFrame({"License Plate": [license_plate]})
+        df = pd.concat([df, new_row], ignore_index=True)
+        
+        # Save the updated DataFrame back to the Excel file
+        df.to_excel(file_path, index=False)
+    except Exception as e:
+        print(f"Error saving to Excel file: {e}")
+
+# Route to display the data
+@app.route('/')
+def index():
+    df = read_excel_data(FILE_PATH)
+    
+    if df is not None:
+        # Convert DataFrame to HTML table
+        table_html = df.to_html(classes='table-auto border border-blue-300 w-full text-sm text-center', index=False)
+        return render_template_string(f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>PiCrew</title>
+            <script src="https://cdn.tailwindcss.com"></script>
+        </head>
+        <body class="bg-blue-50 text-blue-900">
+            <!-- Header -->
+            <header class="bg-blue-700 text-white py-4 shadow-md">
+                <div class="container mx-auto text-center">
+                    <h1 class="text-3xl font-bold">PiCrew</h1>
+                    <p class="text-sm mt-1">Smart Parking System</p>
+                </div>
+            </header>
+
+            <!-- Main Content -->
+            <main class="container mx-auto mt-6 p-4">
+                <!-- Table Section -->
+                <section class="mb-8">
+                    <h2 class="text-2xl font-semibold text-center mb-4">Excel Data Viewer</h2>
+                    <div class="overflow-x-auto bg-white shadow-md rounded-lg p-4">
+                        {table_html}
+                    </div>
+                </section>
+
+                <!-- Form Link -->
+                <div class="text-center">
+                    <a href="/add" class="bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-500 transition">
+                        Add License Plate
+                    </a>
+                </div>
+            </main>
+
+            <!-- Footer -->
+            <footer class="bg-blue-700 text-white py-4 mt-12">
+                <div class="container mx-auto text-center">
+                    <p class="text-sm">PiCrew © 2025 | Smart Parking System</p>
+                </div>
+            </footer>
+        </body>
+        </html>
+        """)
+    else:
+        return "<h1 class='text-blue-900 text-center'>Error loading data from Excel file</h1>"
+
+# Route to display a form to add license plate data
+@app.route('/add', methods=['GET', 'POST'])
+def add_data():
+    if request.method == 'POST':
+        license_plate = request.form.get('license_plate')
+        if license_plate:
+            save_to_excel(FILE_PATH, license_plate)
+            return redirect(url_for('index'))
+    
+    return render_template_string("""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Add License Plate | PiCrew</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+    </head>
+    <body class="bg-blue-50 text-blue-900">
+        <!-- Header -->
+        <header class="bg-blue-700 text-white py-4 shadow-md">
+            <div class="container mx-auto text-center">
+                <h1 class="text-3xl font-bold">PiCrew</h1>
+                <p class="text-sm mt-1">Smart Parking System</p>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="container mx-auto mt-6 p-4">
+            <!-- Form Section -->
+            <section class="bg-white shadow-md rounded-lg p-6 max-w-md mx-auto">
+                <h2 class="text-2xl font-semibold text-center mb-4">Add License Plate</h2>
+                <form method="POST">
+                    <div class="mb-4">
+                        <label for="license_plate" class="block text-sm font-medium mb-2">License Plate</label>
+                        <input type="text" name="license_plate" id="license_plate" class="w-full p-2 border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none" required>
+                    </div>
+                    <div class="text-center">
+                        <button type="submit" class="bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-500 transition">
+                            Submit
+                        </button>
+                        <a href="/" class="ml-4 text-blue-500 hover:text-blue-700">Back</a>
+                    </div>
+                </form>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="bg-blue-700 text-white py-4 mt-12">
+            <div class="container mx-auto text-center">
+                <p class="text-sm">PiCrew © 2025 | Smart Parking System</p>
+            </div>
+        </footer>
+    </body>
+    </html>
+    """)
+
+if __name__ == '__main__':
+    app.run(debug=True)
